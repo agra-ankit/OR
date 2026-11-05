@@ -80,7 +80,7 @@ def compute_ahp_weights():
     # Eigenvalue method
     eigenvalues, eigenvectors = np.linalg.eig(matrix)
     principal_vector = np.real(eigenvectors[:, 0])
-    weights = principal_vector / np.sum(principal_vector)
+    weights = principal_vector / np.sum(principal_vector) #normalization
     return weights
 
 
