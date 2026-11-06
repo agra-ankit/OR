@@ -5,6 +5,11 @@ Methodology: Monte Carlo Simulation (Weather & Terrain) and 0-1 Knapsack Optimiz
 Case Study: 200 km Mountain Highway Corridor (20 Segments x 10 km)
 """
 
+"""
+To identify potentially high-risk sections of a highway and optimally allocate limited resources to mitigate those risks.
+"""
+
+
 import os
 import numpy as np
 import pandas as pd
@@ -32,6 +37,9 @@ def load_corridor_data():
     Parameters represent surveyed terrain profiles, rainfall distributions,
     and geotechnical conditions across different elevation zones.
     """
+    ""
+   
+    
     data = [
         # id, name, start, end, elevation(m), slope_min, slope_mode, slope_max, rain_mu, rain_sigma, soil_a, soil_b, drainage, daily_traffic, cost_cr
         (1, "KM 00-10 Plains Entry", 0, 10, 320, 10, 18, 25, 3.2, 0.45, 6.0, 2.0, 0.85, 12000, 4.5),
@@ -78,10 +86,11 @@ def compute_ahp_weights():
         [1/3.0,   1/2.5,   1/2.0,   1.0    ]   # Drainage deficit
     ])
     
-    # Eigenvalue method
+    # Eigenvalue method 
     eigenvalues, eigenvectors = np.linalg.eig(matrix)
-    principal_vector = np.real(eigenvectors[:, 0])
-    weights = principal_vector / np.sum(principal_vector) #normalization
+    max_idx = np.argmax(np.real(eigenvalues))
+    principal_vector = np.abs(np.real(eigenvectors[:, max_idx]))
+    weights = principal_vector / np.sum(principal_vector) # Normalization so sum(w) = 1.0
     return weights
 
 
@@ -227,6 +236,142 @@ def compute_budget_frontier(results_df, min_b=10.0, max_b=140.0, step=10.0):
     return pd.DataFrame(frontier)
 
 
+
+
+def main():
+    import sys
+    print("=" * 80)
+    print("OPERATIONS RESEARCH: NATIONAL HIGHWAY HAZARD RISK & OPTIMIZATION ENGINE")
+    print("=" * 80)
+    
+    # 1. Budget input (CLI argument or interactive prompt or default 60 Cr)
+    active_budget = MITIGATION_BUDGET_CR
+    if len(sys.argv) > 1:
+        try:
+            active_budget = float(sys.argv[1])
+            print(f"[*] Parameter Received: Capital Budget set to Rs. {active_budget:.1f} Crores")
+        except ValueError:
+            pass
+    elif sys.stdin.isatty():
+        try:
+            print("\n[LIVE DEMO MODE: Test any capital budget scenario live!]")
+            val = input(f"Enter available safety budget in Rs. Crores [Press Enter for default {MITIGATION_BUDGET_CR:.0f} Cr]: ").strip()
+            if val:
+                active_budget = float(val)
+        except (ValueError, EOFError):
+            active_budget = MITIGATION_BUDGET_CR
+            
+    print(f"\n[Running Model] Evaluating 200 km Corridor with Budget = Rs. {active_budget:.1f} Crores...")
+    
+    # 1. Load data
+    df_corridor = load_corridor_data()
+    
+    # 2. Derive AHP weights
+    weights = compute_ahp_weights()
+    print(f"AHP Weights Derived: Rainfall={weights[0]:.3f}, Slope={weights[1]:.3f}, Soil={weights[2]:.3f}, Drainage={weights[3]:.3f}")
+    
+    # 3. Execute Monte Carlo
+    df_results, hazard_samples = run_monte_carlo(df_corridor, weights)
+    
+    # 4. Run Knapsack Optimization with active_budget
+    df_results = optimize_budget(df_results, budget=active_budget)
+    
+    # 5. Export results
+    output_csv = "highway_simulation_results.csv"
+    try:
+        df_results.to_csv(output_csv, index=False)
+        print(f"Results exported to {output_csv}")
+    except PermissionError:
+        output_csv = "highway_simulation_results_latest.csv"
+        df_results.to_csv(output_csv, index=False)
+        print(f"Note: '{output_csv}' saved (original CSV was open in Excel/another program).")
+    
+    # Summary metrics
+    n_high = np.sum(df_results['risk_tier'] == 'High')
+    n_med = np.sum(df_results['risk_tier'] == 'Medium')
+    n_low = np.sum(df_results['risk_tier'] == 'Low')
+    total_pre_loss = np.sum(df_results['expected_loss_cr'])
+    total_post_loss = np.sum(df_results['post_loss_cr'])
+    savings = total_pre_loss - total_post_loss
+    funded_segs = df_results[df_results['selected_for_mitigation'] == 1]
+    total_spent = np.sum(funded_segs['mitigation_cost_cr'])
+    
+    print("\n" + "=" * 80)
+    print(f"OPTIMIZATION RESULTS FOR BUDGET = Rs. {active_budget:.1f} CRORES")
+    print("=" * 80)
+    print(f"  * Total Corridor Length     : 200 km (20 segments)")
+    print(f"  * High-Risk Segments (Red)  : {n_high}")
+    print(f"  * Medium-Risk Segments      : {n_med}")
+    print(f"  * Low-Risk Segments (Green) : {n_low}")
+    print(f"  * Capital Budget Allocated  : Rs. {total_spent:.2f} Cr (out of Rs. {active_budget:.1f} Cr)")
+    print(f"  * Baseline Expected Loss    : Rs. {total_pre_loss:.2f} Crores/yr")
+    print(f"  * Post-Mitigation Loss      : Rs. {total_post_loss:.2f} Crores/yr")
+    print(f"  * System Risk Reduction     : Rs. {savings:.2f} Crores ({(savings/total_pre_loss)*100:.1f}%)")
+    
+    print(f"\n[FUNDED SEGMENTS SELECTED BY 0-1 KNAPSACK MILP]:")
+    for _, row in funded_segs.iterrows():
+        print(f"   -> Segment {int(row['segment_id']):2d} ({row['name']}): Cost = Rs. {row['mitigation_cost_cr']:.1f} Cr | P_f = {row['prob_failure']*100:.1f}%")
+        
+    print("=" * 80)
+    
+    # 6. Generate presentation plots
+    generate_plots(df_results, hazard_samples, weights, active_budget=active_budget)
+    print("Execution completed successfully.")
+
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def safe_savefig(path, **kwargs):
     """Saves figure safely even on Windows/OneDrive with file locks."""
     import time
@@ -267,46 +412,87 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
     # ---------------------------------------------------------
     # Figure 1: Corridor Elevation Profile & Risk Classification
     # ---------------------------------------------------------
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8.5), sharex=True, gridspec_kw={'height_ratios': [1.1, 1.1]})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 9.0), sharex=True, gridspec_kw={'height_ratios': [1.15, 1.1]})
     x_mid = (df['start_km'] + df['end_km']) / 2.0
     
     # Top Panel: Elevation & Geographic Terrain Zones
-    ax1.plot(x_mid, df['elevation_m'], color='#1e293b', lw=2.5, marker='o', markersize=5, label='Highway Elevation Profile')
+    ax1.plot(x_mid, df['elevation_m'], color='#1e293b', lw=2.4, zorder=2)
     ax1.fill_between(x_mid, df['elevation_m'], 0, color='#94a3b8', alpha=0.25)
     
-    # Terrain sector bands
+    # Dynamic scatter points: Blue Diamonds for Funded, Gray circles for Unfunded
+    funded_mask = (df['selected_for_mitigation'] == 1)
+    unfunded_df = df[~funded_mask]
+    funded_df = df[funded_mask]
+    
+    ax1.scatter((unfunded_df['start_km'] + unfunded_df['end_km'])/2.0, unfunded_df['elevation_m'],
+                color='#64748b', s=45, zorder=3, label='Unfunded Highway Segment')
+    ax1.scatter((funded_df['start_km'] + funded_df['end_km'])/2.0, funded_df['elevation_m'],
+                color='#2563eb', marker='D', s=85, edgecolor='#0f172a', lw=1.2, zorder=4,
+                label=f'Knapsack Funded Site ({len(funded_df)} Segments)')
+    
+    # Terrain sector bands along the top
     sectors = [
-        (0, 40, "ZONE A: Foothills & Plains Entry", "#f1f5f9"),
+        (0, 40, "ZONE A: Plains & Lower Foothills", "#f1f5f9"),
         (40, 90, "ZONE B: Active Tectonic Fault Escarpment", "#fee2e2"),
-        (90, 150, "ZONE C: High Mountain Pass & River Gorge", "#fef3c7"),
+        (90, 150, "ZONE C: High Pass Summit & River Gorge", "#fef3c7"),
         (150, 200, "ZONE D: Intermontane Valley Plateau", "#ecfdf5")
     ]
     for s_start, s_end, s_name, s_col in sectors:
-        ax1.axvspan(s_start, s_end, ymin=0.86, ymax=0.98, color=s_col, ec='#94a3b8', lw=0.8, alpha=0.9)
-        ax1.text((s_start + s_end)/2.0, 1950, s_name, ha='center', va='center',
+        ax1.axvspan(s_start, s_end, ymin=0.90, ymax=0.99, color=s_col, ec='#94a3b8', lw=0.8, alpha=0.95)
+        ax1.text((s_start + s_end)/2.0, 2520, s_name, ha='center', va='center',
                  fontsize=8.5, fontweight='bold', color='#1e293b')
         if s_start > 0:
             ax1.axvline(s_start, color='#cbd5e1', linestyle=':', lw=1.2)
             
-    # Highlight high-risk hotspots on elevation profile
-    for _, r in df.iterrows():
-        if r['risk_tier'] == 'High':
-            ax1.annotate(f"Seg {int(r['segment_id'])}: {r['name'].split('(')[0].strip()}\nElev: {int(r['elevation_m'])}m | P_f = {r['prob_failure']*100:.1f}%",
-                         xy=(r['start_km'] + 5, r['elevation_m']),
-                         xytext=(r['start_km'] + 5, r['elevation_m'] + 230),
-                         arrowprops=dict(facecolor='#dc2626', shrink=0.08, width=1.5, headwidth=6),
-                         ha='center', fontsize=8.5, fontweight='bold', color='#991b1b',
-                         bbox=dict(boxstyle="round,pad=0.25", fc="#fee2e2", ec="#dc2626", lw=1.2))
+    # Dynamic Hotspot & Knapsack Mitigation Annotations
+    # 1. Always includes the 3 Primary High-Risk Hotspots (Segments 6, 7, 12)
+    # 2. Plus dynamically includes any additional segment selected for funding by 0-1 Knapsack MILP (e.g. Seg 4, Seg 11)
+    target_sids = set([6, 7, 12])
+    for _, r_fund in df[df['selected_for_mitigation'] == 1].iterrows():
+        target_sids.add(int(r_fund['segment_id']))
+        
+    callout_coords = {
+        4:  (18, 1400),    # xp=35,  xt=18, yt=1400 (approach sector)
+        5:  (28, 1700),    # xp=45,  xt=28, yt=1700
+        6:  (36, 2050),    # xp=55,  xt=36, yt=2050 (summit pass - high left, below ribbon)
+        7:  (74, 1800),    # xp=65,  xt=74, yt=1800 (fault escarpment - mid right)
+        8:  (84, 1550),    # xp=75,  xt=84, yt=1550
+        10: (90, 1500),    # xp=95,  xt=90, yt=1500
+        11: (95, 1400),    # xp=105, xt=95, yt=1400 (river gorge entrance)
+        12: (138, 1400),   # xp=115, xt=138, yt=1400 (canyon floor - right)
+    }
+    
+    for sid in sorted(target_sids):
+        r = df[df['segment_id'] == sid].iloc[0]
+        is_funded = (r['selected_for_mitigation'] == 1)
+        xp = r['start_km'] + 5.0
+        yp = r['elevation_m']
+        xt, yt = callout_coords.get(sid, (xp + 10, yp + 400))
+        
+        if is_funded:
+            status_text = f"STATUS: [FUNDED - Rs. {r['mitigation_cost_cr']:.1f} Cr]"
+            b_bg, b_ec, t_col, a_col = "#eff6ff", "#2563eb", "#1d4ed8", "#2563eb"
+        else:
+            status_text = f"STATUS: [UNFUNDED - {r['risk_tier']} Risk]"
+            b_bg, b_ec, t_col, a_col = "#fee2e2", "#dc2626", "#991b1b", "#dc2626"
+            
+        ax1.annotate(
+            f"Seg {sid}: {r['name'].split('(')[0].strip()}\nElev: {int(yp)}m | P_f = {r['prob_failure']*100:.1f}%\n{status_text}",
+            xy=(xp, yp), xytext=(xt, yt),
+            arrowprops=dict(facecolor=a_col, shrink=0.08, width=1.4, headwidth=5.5),
+            ha='center', fontsize=7.5, fontweight='bold', color=t_col,
+            bbox=dict(boxstyle="round,pad=0.25", fc=b_bg, ec=b_ec, lw=1.2)
+        )
             
     ax1.set_ylabel("Elevation (m ASL)", fontweight='bold')
-    ax1.set_title("FIGURE 1A: 200 KM NATIONAL HIGHWAY CORRIDOR ELEVATION & GEOTECHNICAL ZONING", fontweight='bold', pad=12)
-    ax1.set_ylim(0, 2250)
+    ax1.set_title(f"FIGURE 1A: 200 KM NATIONAL HIGHWAY CORRIDOR ELEVATION & TERRAIN PROFILE", fontweight='bold', pad=12)
+    ax1.set_ylim(0, 2750)
     ax1.grid(True, linestyle='--', alpha=0.5)
-    ax1.legend(loc='upper left', fontsize=9.5)
+    ax1.legend(loc='upper right', bbox_to_anchor=(0.99, 0.88), fontsize=8.5, framealpha=0.95)
     
     # Bottom Panel: Failure Probabilities with Risk Tiers
     # Shaded risk tier background zones
-    ax2.axhspan(15, 40, color='#fee2e2', alpha=0.35, label='High Risk Zone (P_f >= 15%)')
+    ax2.axhspan(15, 48, color='#fee2e2', alpha=0.35, label='High Risk Zone (P_f >= 15%)')
     ax2.axhspan(5, 15, color='#fef3c7', alpha=0.35, label='Medium Risk Zone (5% <= P_f < 15%)')
     ax2.axhspan(0, 5, color='#dcfce7', alpha=0.35, label='Low Risk Zone (P_f < 5%)')
     
@@ -335,23 +521,25 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
     n_high = np.sum(df['risk_tier'] == 'High')
     n_med = np.sum(df['risk_tier'] == 'Medium')
     n_low = np.sum(df['risk_tier'] == 'Low')
+    spent_curr = np.sum(df[df['selected_for_mitigation'] == 1]['mitigation_cost_cr'])
+    
     stats_text = (
-        f"Corridor Statistics:\n"
+        f"Corridor & Optimization Summary:\n"
         f"• Total Length: 200 km (20 Segments)\n"
-        f"• High-Risk (Red)   : {n_high} Segments\n"
-        f"• Medium-Risk (Amber): {n_med} Segments\n"
-        f"• Low-Risk (Green)  : {n_low} Segments\n"
-        f"• Base Annual Loss  : Rs. {total_baseline_loss:.2f} Cr/yr"
+        f"• Risk Tiers  : 3 Red | 4 Amber | 13 Green\n"
+        f"• Active Cap  : Rs. {active_budget:.1f} Cr (Spent: Rs. {spent_curr:.1f} Cr)\n"
+        f"• Sites Funded: {np.sum(df['selected_for_mitigation'] == 1)} Segments\n"
+        f"• Base Loss   : Rs. {total_baseline_loss:.2f} Cr/yr"
     )
-    ax2.text(0.98, 0.94, stats_text, transform=ax2.transAxes, ha='right', va='top',
-             fontsize=9, fontweight='bold', color='#1e293b',
-             bbox=dict(boxstyle="round,pad=0.4", fc="#ffffff", ec="#64748b", lw=1.2, alpha=0.95), zorder=5)
+    ax2.text(0.985, 0.94, stats_text, transform=ax2.transAxes, ha='right', va='top',
+             fontsize=8.5, fontweight='bold', color='#1e293b',
+             bbox=dict(boxstyle="round,pad=0.35", fc="#ffffff", ec="#64748b", lw=1.2, alpha=0.95), zorder=5)
     
     ax2.set_xlabel("Highway Chainage (km 0 to km 200)", fontweight='bold')
     ax2.set_ylabel("Failure Probability P_f (%)", fontweight='bold')
-    ax2.set_title("FIGURE 1B: MONTE CARLO FAILURE PROBABILITY & 0-1 KNAPSACK SELECTION", fontweight='bold', pad=10)
+    ax2.set_title(f"FIGURE 1B: MONTE CARLO FAILURE PROBABILITY & 0-1 KNAPSACK SELECTION (BUDGET = Rs. {active_budget:.0f} Cr)", fontweight='bold', pad=10)
     ax2.set_xticks(np.arange(0, 210, 20))
-    ax2.set_ylim(0, 42)
+    ax2.set_ylim(0, 48)
     ax2.legend(loc='upper left', fontsize=9, framealpha=0.95)
     ax2.grid(True, linestyle='--', alpha=0.5, zorder=0)
     
@@ -596,14 +784,16 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
         donut_labels.append(f"Seg {sid}: {m_name}\n(Rs. {r['mitigation_cost_cr']:.1f} Cr | {r['mitigation_cost_cr']/active_budget*100:.1f}%)")
         donut_costs.append(r['mitigation_cost_cr'])
         
+    palette = ['#dc2626', '#2563eb', '#d97706', '#059669', '#7c3aed', '#db2777', '#0891b2']
+    donut_colors = [palette[i % len(palette)] for i in range(len(funded))]
     if unspent > 0.1:
         donut_labels.append(f"Contingency Reserve\n(Rs. {unspent:.1f} Cr | {unspent/active_budget*100:.1f}%)")
         donut_costs.append(unspent)
+        donut_colors.append('#94a3b8') # Distinct slate gray for unallocated reserve
         
-    pie_colors = ['#dc2626', '#2563eb', '#d97706', '#94a3b8', '#059669']
     wedges, texts, autotexts = ax2.pie(
         donut_costs, labels=donut_labels, autopct='%1.1f%%',
-        colors=pie_colors[:len(donut_costs)], startangle=140, pctdistance=0.75,
+        colors=donut_colors, startangle=140, pctdistance=0.75,
         textprops={'fontweight': 'bold', 'fontsize': 8.5},
         wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.0)
     )
@@ -659,12 +849,18 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
     ax_f1.axvline(b_val, color='#0f172a', linestyle=':', lw=2.2)
     ax_f1.plot(b_val, pct_val, marker='*', markersize=14, color='#f59e0b', markeredgecolor='#0f172a', markeredgewidth=1.2, zorder=5)
     
+    if abs(active_budget - 60.0) < 1.0:
+        status_title = "★ RECOMMENDED SWEET SPOT: Rs. 60 Cr"
+        status_note = "• Marginal ROI   : Optimal Elbow Point\n(Mitigates 100% of critical Red Hotspots)"
+    else:
+        status_title = f"★ EVALUATED SCENARIO: Rs. {active_budget:.0f} Cr"
+        status_note = f"• Compared to Baseline Rs. 60 Cr Sweet Spot\n• Deployed: Rs. {baseline_row['budget_spent'].values[0]:.1f} Cr ({int(baseline_row['n_funded'].values[0])} Segments Funded)"
+        
     elbow_annotation = (
-        f"★ RECOMMENDED SWEET SPOT: Rs. {active_budget:.0f} Cr\n"
+        f"{status_title}\n"
         f"• Risk Reduction : {pct_val:.1f}%\n"
         f"• Residual Loss  : Rs. {res_val:.2f} Cr/yr\n"
-        f"• Marginal ROI   : Optimal Elbow Point\n"
-        f"(Mitigates 100% of critical Red Hotspots)"
+        f"{status_note}"
     )
     ax_f1.annotate(elbow_annotation,
                    xy=(b_val, pct_val), xytext=(b_val + 7, pct_val - 22),
@@ -681,9 +877,13 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
     milestone_budgets = [30.0, 60.0, 80.0, 100.0, 140.0]
     m_sub = frontier_df[frontier_df['budget_limit'].isin(milestone_budgets)]
     table_cell_text = []
-    for _, row in m_sub.iterrows():
+    active_row_idx = None
+    for r_idx, (_, row) in enumerate(m_sub.iterrows()):
+        b_lim = row['budget_limit']
+        if abs(active_budget - b_lim) < 1.0:
+            active_row_idx = r_idx + 1  # +1 for header row
         table_cell_text.append([
-            f"Rs. {row['budget_limit']:.0f} Cr",
+            f"Rs. {b_lim:.0f} Cr",
             f"Rs. {row['budget_spent']:.1f} Cr",
             f"{int(row['n_funded'])} segs",
             f"{row['risk_reduction_pct']:.1f}%"
@@ -698,7 +898,10 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
         if row == 0:
             cell.set_facecolor('#0f172a')
             cell.set_text_props(color='white', fontweight='bold')
-        elif row == 2:  # Rs. 60 Cr row
+        elif active_row_idx is not None and row == active_row_idx:
+            cell.set_facecolor('#dbeafe')
+            cell.set_text_props(fontweight='bold', color='#1d4ed8')
+        elif active_row_idx is None and row == 2:  # Default highlight 60 Cr row
             cell.set_facecolor('#dbeafe')
             cell.set_text_props(fontweight='bold', color='#1d4ed8')
         else:
@@ -713,88 +916,3 @@ def generate_plots(df, hazard_samples, weights, active_budget=MITIGATION_BUDGET_
     plt.close()
     
     print(f"All 5 presentation figures saved in '{PLOTS_DIR}/'.")
-
-
-def main():
-    import sys
-    print("=" * 80)
-    print("OPERATIONS RESEARCH: NATIONAL HIGHWAY HAZARD RISK & OPTIMIZATION ENGINE")
-    print("=" * 80)
-    
-    # 1. Budget input (CLI argument or interactive prompt or default 60 Cr)
-    active_budget = MITIGATION_BUDGET_CR
-    if len(sys.argv) > 1:
-        try:
-            active_budget = float(sys.argv[1])
-            print(f"[*] Parameter Received: Capital Budget set to Rs. {active_budget:.1f} Crores")
-        except ValueError:
-            pass
-    elif sys.stdin.isatty():
-        try:
-            print("\n[LIVE DEMO MODE: Test any capital budget scenario live!]")
-            val = input(f"Enter available safety budget in Rs. Crores [Press Enter for default {MITIGATION_BUDGET_CR:.0f} Cr]: ").strip()
-            if val:
-                active_budget = float(val)
-        except (ValueError, EOFError):
-            active_budget = MITIGATION_BUDGET_CR
-            
-    print(f"\n[Running Model] Evaluating 200 km Corridor with Budget = Rs. {active_budget:.1f} Crores...")
-    
-    # 1. Load data
-    df_corridor = load_corridor_data()
-    
-    # 2. Derive AHP weights
-    weights = compute_ahp_weights()
-    print(f"AHP Weights Derived: Rainfall={weights[0]:.3f}, Slope={weights[1]:.3f}, Soil={weights[2]:.3f}, Drainage={weights[3]:.3f}")
-    
-    # 3. Execute Monte Carlo
-    df_results, hazard_samples = run_monte_carlo(df_corridor, weights)
-    
-    # 4. Run Knapsack Optimization with active_budget
-    df_results = optimize_budget(df_results, budget=active_budget)
-    
-    # 5. Export results
-    output_csv = "highway_simulation_results.csv"
-    try:
-        df_results.to_csv(output_csv, index=False)
-        print(f"Results exported to {output_csv}")
-    except PermissionError:
-        output_csv = "highway_simulation_results_latest.csv"
-        df_results.to_csv(output_csv, index=False)
-        print(f"Note: '{output_csv}' saved (original CSV was open in Excel/another program).")
-    
-    # Summary metrics
-    n_high = np.sum(df_results['risk_tier'] == 'High')
-    n_med = np.sum(df_results['risk_tier'] == 'Medium')
-    n_low = np.sum(df_results['risk_tier'] == 'Low')
-    total_pre_loss = np.sum(df_results['expected_loss_cr'])
-    total_post_loss = np.sum(df_results['post_loss_cr'])
-    savings = total_pre_loss - total_post_loss
-    funded_segs = df_results[df_results['selected_for_mitigation'] == 1]
-    total_spent = np.sum(funded_segs['mitigation_cost_cr'])
-    
-    print("\n" + "=" * 80)
-    print(f"OPTIMIZATION RESULTS FOR BUDGET = Rs. {active_budget:.1f} CRORES")
-    print("=" * 80)
-    print(f"  * Total Corridor Length     : 200 km (20 segments)")
-    print(f"  * High-Risk Segments (Red)  : {n_high}")
-    print(f"  * Medium-Risk Segments      : {n_med}")
-    print(f"  * Low-Risk Segments (Green) : {n_low}")
-    print(f"  * Capital Budget Allocated  : Rs. {total_spent:.2f} Cr (out of Rs. {active_budget:.1f} Cr)")
-    print(f"  * Baseline Expected Loss    : Rs. {total_pre_loss:.2f} Crores/yr")
-    print(f"  * Post-Mitigation Loss      : Rs. {total_post_loss:.2f} Crores/yr")
-    print(f"  * System Risk Reduction     : Rs. {savings:.2f} Crores ({(savings/total_pre_loss)*100:.1f}%)")
-    
-    print(f"\n[FUNDED SEGMENTS SELECTED BY 0-1 KNAPSACK MILP]:")
-    for _, row in funded_segs.iterrows():
-        print(f"   -> Segment {int(row['segment_id']):2d} ({row['name']}): Cost = Rs. {row['mitigation_cost_cr']:.1f} Cr | P_f = {row['prob_failure']*100:.1f}%")
-        
-    print("=" * 80)
-    
-    # 6. Generate presentation plots
-    generate_plots(df_results, hazard_samples, weights, active_budget=active_budget)
-    print("Execution completed successfully.")
-
-
-if __name__ == '__main__':
-    main()
